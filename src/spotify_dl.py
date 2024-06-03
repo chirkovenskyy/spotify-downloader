@@ -4,6 +4,7 @@ import requests
 import signal
 import sys
 import traceback
+import io
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from datetime import datetime
@@ -104,13 +105,14 @@ def get_track_data(track_id: str):
     return resp_json
 
 
-def get_playlist_data(playlist_id: str):
-    metadata_resp = _call_downloader_api(f"/metadata/playlist/{playlist_id}").json()
+def get_playlist_data(playlist_id: str, is_album: bool):
+    pl_type = 'playlist' if not is_album else 'album'
+    metadata_resp = _call_downloader_api(f"/metadata/{pl_type}/{playlist_id}").json()
 
     # For paginated response
     track_list = []
 
-    tracks_resp = _call_downloader_api(f"/trackList/playlist/{playlist_id}").json()
+    tracks_resp = _call_downloader_api(f"/trackList/{pl_type}/{playlist_id}").json()
     
     if not tracks_resp.get('trackList'):
         return {}
@@ -118,7 +120,7 @@ def get_playlist_data(playlist_id: str):
     track_list.extend(tracks_resp['trackList'])
 
     while next_offset := tracks_resp.get('nextOffset'):
-        tracks_resp = _call_downloader_api(f"/trackList/playlist/{playlist_id}?offset={next_offset}").json()
+        tracks_resp = _call_downloader_api(f"/trackList/{pl_type}/{playlist_id}?offset={next_offset}").json()
         track_list.extend(tracks_resp['trackList'])
 
     if not metadata_resp['success']:
@@ -130,7 +132,7 @@ def get_playlist_data(playlist_id: str):
             SpotifySong(
                 title=track['title'],
                 artist=track['artists'],
-                album=track['album'],
+                album=track['album'] if pl_type == 'playlist' else None,
                 id=track['id']
             )
             for track in track_list
@@ -161,12 +163,35 @@ def get_spotify_playlist(playlist_id: str, token: str):
 
     return playlist['name'], playlist['owner']['display_name'], tracks_list
 
+def get_spotify_album(album_id: str, token: str):
+    # GET to playlist URL can get first 30 songs only
+    # soup.find_all('meta', content=re.compile("https://open.spotify.com/track/\w+"))
+
+    playlist_resp = requests.get(
+        f'https://api.spotify.com/v1/albums/{album_id}',
+        headers={'Authorization': f"Bearer {token}"}
+    )
+
+    album = playlist_resp.json()
+
+    tracks_list = [
+        SpotifySong(
+            title=track['track']['name'],
+            artist=', '.join(artist['name'] for artist in track['track']['artists']),
+            album=track['track']['album']['name'],
+            id=track['track']['id']
+        )
+        for track in album['tracks']['items']
+    ]
+
+    return album['name'], album['owner']['display_name'], tracks_list
+
 
 def get_tracks_to_download(interactive: bool, cli_arg_urls: list = None) -> list:
     tracks_to_dl = []
 
     if interactive:
-        print("Enter URL for Spotify track to download, a playlist to download from, or press [ENTER] with an empty line when done.")
+        print("Enter URL for Spotify track to download, a playlist or album to download from, or press [ENTER] with an empty line when done.")
 
         while url := input("> "):
             track_id_title_tuple_list = process_input_url(url, interactive)
@@ -187,9 +212,16 @@ def get_tracks_to_download(interactive: bool, cli_arg_urls: list = None) -> list
 
     return tracks_to_dl
 
-
 def set_output_dir(interactive: bool, cli_arg_output_dir: Path, cli_arg_create_dir: bool = None) -> None:
-    default_output_dir = Path.home()/'Downloads'
+    # If the file is not present, then use the default local path
+    if not Path("stored_path").is_file():
+        default_output_dir = Path.home()/"Downloads"
+    else:
+        default_output_dir = Path(io.open("stored_path", 'r').read())
+        # If the file is found but the stored path is not valid,
+        # Fall back to the default one
+        if not default_output_dir.is_dir():
+            default_output_dir = Path.home()/"Downloads"
 
     if interactive:
         output_dir = default_output_dir
@@ -199,11 +231,20 @@ def set_output_dir(interactive: bool, cli_arg_output_dir: Path, cli_arg_create_d
             output_dir = Path(other_dir)
 
         while not output_dir.is_dir():
-            mkdir_inp = input(f"The directory '{output_dir.absolute()}' does not exist.  Would you like to create it? [y/n]: ")
+            mkdir_inp = input(f"The directory '{output_dir.absolute()}' does not exist.  Would you like to create it? [y/N]: ")
             if mkdir_inp.lower() == 'y':
                 output_dir.mkdir(parents=True)
             else:
                 output_dir = Path(input("\nNew download location: "))
+        
+        # Checking if the issued path is the same as the stored one
+        # If it's not, then prompt the user if they'd like to overwrite it
+        if output_dir != default_output_dir:
+            save_path = input("Would you like to save the current path for downloads? [y/N]: ")
+            if save_path.lower() == 'y':
+                f = io.open("stored_path", 'w')
+                f.write(other_dir)
+
 
     else:
         output_dir = cli_arg_output_dir
@@ -294,14 +335,15 @@ def process_input_url(url: str, interactive: bool) -> list:
 
         track_id_title_tuples.append((track_resp_json['metadata']['id'], track_title))
 
-    elif "/playlist/" in url:
+    elif "/playlist/" or "/album/" in url:
+        is_playlist = 1 if "/playlist/" in url else 0
         playlist_id = url.split('/')[-1].split('?')[0].split('|')[0]
 
         # playlist_name, playlist_creator, playlist_tracks = get_spotify_playlist(playlist_id, token)
-        playlist_resp_json = get_playlist_data(playlist_id)
+        playlist_resp_json = get_playlist_data(playlist_id, is_album=not is_playlist)
 
         if not playlist_resp_json:
-            print(f"\t[!] Playlist not found{f' at {url}' if not interactive else ''} or it is set to Private.")
+            print(f"\t[!] Playlist/Album not found{f' at {url}' if not interactive else ''}{" or it is set to Private" if is_playlist else ''}.")
             return []
 
         # print(f"\t{playlist_name} - {playlist_creator} ({len(playlist_tracks)} tracks)")

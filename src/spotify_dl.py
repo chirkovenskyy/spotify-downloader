@@ -227,7 +227,7 @@ def set_output_dir(interactive: bool, cli_arg_output_dir: Path, cli_arg_create_d
         output_dir = default_output_dir
         print(f"Downloads will go to {output_dir}.  If you would like to change, enter the location or press [ENTER]")
 
-        if other_dir := input("(New download location?) "):
+        if other_dir := input("(New download location?) ").replace('.', str(output_dir), 1):
             output_dir = Path(other_dir)
 
         while not output_dir.is_dir():
@@ -235,7 +235,7 @@ def set_output_dir(interactive: bool, cli_arg_output_dir: Path, cli_arg_create_d
             if mkdir_inp.lower() == 'y':
                 output_dir.mkdir(parents=True)
             else:
-                output_dir = Path(input("\nNew download location: "))
+                output_dir = Path(input("\nNew download location: ").replace('.', str(default_output_dir), 1))
         
         # Checking if the issued path is the same as the stored one
         # If it's not, then prompt the user if they'd like to overwrite it

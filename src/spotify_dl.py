@@ -553,6 +553,40 @@ def spotify_downloader(
         if not interactive:
             loop_prompt = False
 
+        if broken_tracks:
+            nl = '\n'
+            print(
+                "\n[!] The following tracks could not be downloaded:\n"
+                f"  * {f'{nl}  * '.join(t_title for t_id, t_title, out_dir in broken_tracks)}\n"
+            )
+
+            if not interactive:
+                num_retries = len(broken_tracks) or 0
+            else:
+                resp = input("Would you like to retry downloading these tracks? [y/N]\n")
+                if resp.lower() == 'y':
+                    # Input handling needed here
+                    num_retries = int(input("How many attempts?\n"))
+
+            if num_retries:
+                print("Re-attempting to download tracks")
+                for i in range(num_retries):
+                    if len(broken_tracks) == 0:
+                        print('All fine!')
+                        break
+                    print(f"Attempt {i + 1} of {num_retries}") 
+                    for track_id, track_title, output_dir in broken_tracks.copy():
+                        try:
+                            download_track(track_id, track_title, output_dir)
+                        except Exception:
+                            continue
+                        else:
+                            broken_tracks.remove((track_id, track_title, output_dir))
+                    sleep(1)
+
+            if interactive:
+                input("\nPress [ENTER] to exit.\n")
+
     return broken_tracks
 
 
@@ -669,37 +703,6 @@ def main():
                         debug_mode=args.debug
                     )
                 )
-
-    if broken_tracks:
-        nl = '\n'
-        print(
-            "\n[!] The following tracks could not be downloaded:\n"
-            f"  * {f'{nl}  * '.join(t_title for t_id, t_title, out_dir in broken_tracks)}\n"
-        )
-
-        if not interactive:
-            num_retries = args.retry_failed_downloads or 0
-        else:
-            resp = input("Would you like to retry downloading these tracks? [y/N]\n")
-            if resp.lower() == 'y':
-                # Input handling needed here
-                num_retries = int(input("How many attempts?\n"))
-
-        if num_retries:
-            print("Re-attempting to download tracks")
-            for i in range(num_retries):
-                print(f"Attempt {i + 1} of {num_retries}") 
-                for track_id, track_title, output_dir in broken_tracks.copy():
-                    try:
-                        download_track(track_id, track_title, output_dir)
-                    except Exception:
-                        continue
-                    else:
-                        broken_tracks.remove((track_id, track_title, output_dir))
-                sleep(1)
-
-        if interactive:
-            input("\nPress [ENTER] to exit.\n")
 
     # Give a chance to see the messages if running via executable
     sleep(1)
